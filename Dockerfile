@@ -9,7 +9,7 @@ WORKDIR /build
 COPY . .
 
 # Build application (NO sonar here)
-RUN mvn clean install -DskipTests
+RUN mvn clean install 
 
 # =========================
 # Stage 2: Runtime
