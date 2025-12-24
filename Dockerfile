@@ -8,11 +8,13 @@ WORKDIR /build
 # Copy entire Jenkins context
 COPY . .
 
-# Go into the real Jenkins job workspace
-# This folder name = Jenkins JOB_NAME
-WORKDIR /build/workspace/${JOB_NAME}
+# Find where pom.xml actually is (debug-safe)
+RUN find . -name pom.xml
 
-# Debug once (remove later)
+# Move into the directory that contains pom.xml
+WORKDIR /build/workspace/*
+
+# Verify
 RUN ls -l && test -f pom.xml
 
 # Build
@@ -23,10 +25,9 @@ RUN mvn clean install -DskipTests
 # =========================
 FROM eclipse-temurin:11-jre
 
-ENV APP_HOME=/usr/src/app
-WORKDIR $APP_HOME
+WORKDIR /usr/src/app
 
-COPY --from=builder /build/workspace/${JOB_NAME}/target/*.jar app.jar
+COPY --from=builder /build/workspace/*/target/*.jar app.jar
 
 EXPOSE 8080
 CMD ["java", "-jar", "app.jar"]
