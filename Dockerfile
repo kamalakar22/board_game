@@ -5,11 +5,14 @@ FROM maven:3.9.9-eclipse-temurin-11 AS builder
 
 WORKDIR /build
 
-# Copy EVERYTHING (simplest & safest)
+# Copy everything from Jenkins context
 COPY . .
 
-# Ensure pom.xml exists
-RUN ls -l && test -f pom.xml
+# Move into actual Jenkins workspace (IMPORTANT)
+WORKDIR /build/workspace
+
+# Optional: show files for debug (can remove later)
+RUN ls -l
 
 # Build
 RUN mvn clean install -DskipTests
@@ -22,7 +25,7 @@ FROM eclipse-temurin:11-jre
 ENV APP_HOME=/usr/src/app
 WORKDIR $APP_HOME
 
-COPY --from=builder /build/target/*.jar app.jar
+COPY --from=builder /build/workspace/target/*.jar app.jar
 
 EXPOSE 8080
 CMD ["java", "-jar", "app.jar"]
