@@ -14,12 +14,9 @@ pipeline {
     ARGO_REPO  = "github.com/kamalakar22/argo-deploy.git"
     ARGO_DIR   = "argo-deploy"
     MANIFESTS  = "manifests"
-	
-	// Trivy DB mirrors (already pushed by you)
-    TRIVY_DB_REPOSITORY      = "docker.io/kamalakar2210/trivy-db"
-    TRIVY_JAVA_DB_REPOSITORY = "docker.io/kamalakar2210/trivy-java-db"
 
-    
+    TRIVY_DB_REPOSITORY       = "docker.io/kamalakar2210/trivy-db"
+    TRIVY_JAVA_DB_REPOSITORY  = "docker.io/kamalakar2210/trivy-java-db"
   }
 
   stages {
@@ -35,8 +32,6 @@ pipeline {
       }
     }
 
-
-
     stage('Maven Clean Install') {
       steps {
         sh '''
@@ -51,7 +46,7 @@ pipeline {
         withSonarQubeEnv('sonarqube') {
           sh '''
             echo "=== SONARQUBE SCAN ==="
-            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            mvn sonar:sonar \
               -Dsonar.projectKey=board-game \
               -Dsonar.projectName=board-game
           '''
@@ -66,15 +61,11 @@ pipeline {
             echo "=== TRIVY FS SCAN ==="
             mkdir -p trivy-reports sbom
 
-            # HTML report
             trivy fs \
-              --server ${TRIVY_SERVER_URL} \
-              --format html \
-              --output trivy-reports/fs-vuln.html .
+              --format table \
+              --output trivy-reports/fs-vuln.txt .
 
-            # SBOM in CycloneDX format
             trivy fs \
-              --server ${TRIVY_SERVER_URL} \
               --scanners vuln,license \
               --format cyclonedx \
               --output sbom/sbom-fs.json .
@@ -98,34 +89,22 @@ pipeline {
       }
     }
 
-   /* =================================================
-       Prepare Trivy HTML Template
-       ================================================= */
     stage('Prepare Trivy Template') {
       steps {
         sh '''
           mkdir -p trivy-templates trivy-reports
-
-          if [ ! -f trivy-templates/html.tpl ]; then
-            curl -fsSL \
-              https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl \
-              -o trivy-templates/html.tpl
-          fi
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl \
+            -o trivy-templates/html.tpl
         '''
       }
     }
 
-    /* =================================================
-       Trivy Image Scan (NON-BLOCKING, ALL SEVERITIES)
-       ================================================= */
     stage('Trivy Image Scan (NON-BLOCKING)') {
       steps {
         sh '''
-          echo "=== TRIVY IMAGE SCAN (NON-BLOCKING) ==="
-
+          echo "=== TRIVY IMAGE SCAN ==="
           trivy image \
-            --scanners vuln \
-            --input image.tar \
+            ${IMAGE_NAME}:${IMAGE_TAG} \
             --severity LOW,MEDIUM,HIGH,CRITICAL \
             --ignore-unfixed \
             --no-progress \
@@ -135,7 +114,6 @@ pipeline {
         '''
       }
     }
-  }
 
     stage('Update ArgoCD Manifests') {
       steps {
@@ -146,14 +124,10 @@ pipeline {
         )]) {
           sh '''
             echo "=== UPDATE ARGOCD MANIFESTS ==="
-
             rm -rf ${ARGO_DIR}
 
             git clone https://${GIT_USER}:${GIT_TOKEN}@${ARGO_REPO}
-
             cd ${ARGO_DIR}/${MANIFESTS}
-
-            echo "Updating image to ${IMAGE_NAME}:${IMAGE_TAG}"
 
             sed -i "s|image: .*board_game.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|g" deploy.yaml
 
@@ -161,20 +135,20 @@ pipeline {
             git config user.email "jenkins@ci.local"
 
             git add deploy.yaml
-
-            git commit -m "ci: update board_game image to ${IMAGE_TAG}" || echo "No changes to commit"
-
+            git commit -m "ci: update board_game image to ${IMAGE_TAG}" || echo "No changes"
             git push origin main
           '''
         }
       }
     }
-  }
+
+  } // end stages
 
   post {
     always {
       archiveArtifacts allowEmptyArchive: true, artifacts: '''
         trivy-reports/*.html,
+        trivy-reports/*.txt,
         sbom/*.json
       '''
       echo "Build #: ${BUILD_NUMBER}"
@@ -182,11 +156,11 @@ pipeline {
     }
 
     success {
-      echo "✅ PIPELINE SUCCESS – Argo CD will sync automatically"
+      echo "PIPELINE SUCCESS – ArgoCD will sync automatically"
     }
 
     failure {
-      echo "❌ PIPELINE FAILED"
+      echo "PIPELINE FAILED"
     }
   }
 }
