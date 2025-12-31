@@ -62,7 +62,7 @@ pipeline {
       }
     }
 
-    /* =========================
+    /* ==========================
        Trivy FS Scan (Non-blocking)
        ========================= */
     stage('Trivy FS Scan & SBOM') {
