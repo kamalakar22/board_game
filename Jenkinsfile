@@ -46,9 +46,10 @@ pipeline {
         withSonarQubeEnv('sonarqube') {
           sh '''
             echo "=== SONARQUBE SCAN ==="
-            mvn sonar:sonar \
-              -Dsonar.projectKey=board-game \
-              -Dsonar.projectName=board-game
+            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+             -Dsonar.projectKey=board-game \
+             -Dsonar.projectName=board-game
+
           '''
         }
       }
