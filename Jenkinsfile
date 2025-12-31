@@ -136,7 +136,7 @@ pipeline {
         trivy-reports/*,
         sbom/*.json
       '''
-      echo "Build #: ${BUILD_NUMBER}"
+      
       echo "Result : ${currentBuild.currentResult}"
     }
   }
