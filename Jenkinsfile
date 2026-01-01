@@ -11,55 +11,65 @@ pipeline {
     IMAGE_NAME = "kamalakar2210/board_game"
     IMAGE_TAG  = "${BUILD_NUMBER}"
 
-    ARGO_REPO  = "github.com/kamalakar22/argo-deploy.git"
-    ARGO_DIR   = "argo-deploy"
-    MANIFESTS  = "manifests"
+    ARGO_REPO = "github.com/kamalakar22/argo-deploy.git"
+    ARGO_DIR  = "argo-deploy"
+    MANIFESTS = "manifests"
 
     /* =========================
-       SHARED CACHE LOCATIONS
+       SHARED CACHE (PVC)
        ========================= */
-    MAVEN_OPTS        = "-Dmaven.repo.local=/cache/maven"
-    NPM_CONFIG_CACHE  = "/cache/npm"
-    TRIVY_CACHE_DIR   = "/cache/trivy"
+    MAVEN_OPTS       = "-Dmaven.repo.local=/cache/maven"
+    TRIVY_CACHE_DIR  = "/cache/trivy"
+  }
 
-    TRIVY_DB_REPOSITORY      = "docker.io/kamalakar2210/trivy-db"
-    TRIVY_JAVA_DB_REPOSITORY = "docker.io/kamalakar2210/trivy-java-db"
+  options {
+    timestamps()
+    disableConcurrentBuilds()
   }
 
   stages {
 
+    /* =========================
+       Verify Agent & Cache
+       ========================= */
     stage('Verify Agent') {
       steps {
         sh '''
+          echo "User:"
           whoami
+
+          echo "Java / Maven:"
           mvn -v
+
+          echo "Trivy:"
           trivy --version || true
-          echo "Cache directory:"
-          ls -l /cache || true
+
+          echo "Cache contents:"
+          ls -lah /cache || true
         '''
       }
     }
 
     /* =========================
-       Maven Build (ONLY ONCE)
+       Maven Build (ONCE)
        ========================= */
     stage('Maven Build') {
       steps {
         sh '''
-          echo "=== MAVEN BUILD (WITH CACHE) ==="
+          echo "=== MAVEN BUILD ==="
           mvn clean package -DskipTests
         '''
       }
     }
 
     /* =========================
-       SonarQube Scan (ANALYSIS ONLY)
+       SonarQube Scan (NO REBUILD)
        ========================= */
     stage('SonarQube Scan') {
       steps {
         withSonarQubeEnv('sonarqube') {
           sh '''
-            echo "=== SONARQUBE ANALYSIS (REUSE MAVEN CACHE) ==="
+            echo "=== SONAR ANALYSIS ==="
 
             mvn -DskipTests \
                 -Dsonar.projectKey=board-game \
@@ -71,7 +81,7 @@ pipeline {
       }
     }
 
-    /* ==========================
+    /* =========================
        Trivy FS Scan & SBOM
        ========================= */
     stage('Trivy FS Scan & SBOM') {
@@ -96,33 +106,32 @@ pipeline {
       }
     }
 
-/* =========================
-   Kaniko Build & Push
-   ========================= */
-stage('Kaniko Build & Push') {
-  steps {
-    container('kaniko') {
-      sh '''
-        echo "Preparing Kaniko cache directory..."
-        mkdir -p /cache/kaniko
+    /* =========================
+       Kaniko Build & Push
+       ========================= */
+    stage('Kaniko Build & Push') {
+      steps {
+        container('kaniko') {
+          sh '''
+            echo "Preparing Kaniko cache..."
+            mkdir -p /cache/kaniko
 
-        /kaniko/executor \
-          --context /workspace \
-          --dockerfile Dockerfile \
-          --destination ${IMAGE_NAME}:${IMAGE_TAG} \
-          --destination ${IMAGE_NAME}:latest \
-          --cache=true \
-          --cache-dir=/cache/kaniko
-      '''
+            /kaniko/executor \
+              --context /workspace \
+              --dockerfile Dockerfile \
+              --destination ${IMAGE_NAME}:${IMAGE_TAG} \
+              --destination ${IMAGE_NAME}:latest \
+              --cache=true \
+              --cache-dir=/cache/kaniko
+          '''
+        }
+      }
     }
-  }
-}
-
 
     /* =========================
-       Update ArgoCD
+       Update Argo Rollout (Canary 30%)
        ========================= */
-    stage('Update ArgoCD Manifests') {
+    stage('Update Argo Rollout') {
       steps {
         withCredentials([usernamePassword(
           credentialsId: 'github-pat',
@@ -134,12 +143,14 @@ stage('Kaniko Build & Push') {
             git clone https://${GIT_USER}:${GIT_TOKEN}@${ARGO_REPO}
             cd ${ARGO_DIR}/${MANIFESTS}
 
-            sed -i "s|image: .*board_game.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|g" deploy.yaml
+            echo "Updating rollout image to ${IMAGE_NAME}:${IMAGE_TAG}"
+
+            sed -i "s|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|g" rollout.yaml
 
             git config user.name "Jenkins CI"
             git config user.email "jenkins@ci.local"
-            git add deploy.yaml
-            git commit -m "ci: update board_game image to ${IMAGE_TAG}" || true
+            git add rollout.yaml
+            git commit -m "canary: 30% rollout ${IMAGE_TAG}" || true
             git push origin main
           '''
         }
@@ -153,7 +164,7 @@ stage('Kaniko Build & Push') {
         trivy-reports/*,
         sbom/*.json
       '''
-      echo "Result : ${currentBuild.currentResult}"
+      echo "Pipeline result: ${currentBuild.currentResult}"
     }
   }
 }
