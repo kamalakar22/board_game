@@ -15,6 +15,13 @@ pipeline {
     ARGO_DIR   = "argo-deploy"
     MANIFESTS  = "manifests"
 
+    /* =========================
+       SHARED CACHE LOCATIONS
+       ========================= */
+    MAVEN_OPTS        = "-Dmaven.repo.local=/cache/maven"
+    NPM_CONFIG_CACHE  = "/cache/npm"
+    TRIVY_CACHE_DIR   = "/cache/trivy"
+
     TRIVY_DB_REPOSITORY      = "docker.io/kamalakar2210/trivy-db"
     TRIVY_JAVA_DB_REPOSITORY = "docker.io/kamalakar2210/trivy-java-db"
   }
@@ -27,6 +34,8 @@ pipeline {
           whoami
           mvn -v
           trivy --version || true
+          echo "Cache directory:"
+          ls -l /cache || true
         '''
       }
     }
@@ -37,7 +46,7 @@ pipeline {
     stage('Maven Build') {
       steps {
         sh '''
-          echo "=== MAVEN BUILD (ONCE) ==="
+          echo "=== MAVEN BUILD (WITH CACHE) ==="
           mvn clean package -DskipTests
         '''
       }
@@ -50,7 +59,7 @@ pipeline {
       steps {
         withSonarQubeEnv('sonarqube') {
           sh '''
-            echo "=== SONARQUBE ANALYSIS ONLY ==="
+            echo "=== SONARQUBE ANALYSIS (REUSE MAVEN CACHE) ==="
 
             mvn -DskipTests \
                 -Dsonar.projectKey=board-game \
@@ -63,7 +72,7 @@ pipeline {
     }
 
     /* ==========================
-       Trivy FS Scan (Non-blocking)
+       Trivy FS Scan & SBOM
        ========================= */
     stage('Trivy FS Scan & SBOM') {
       steps {
@@ -72,11 +81,13 @@ pipeline {
             mkdir -p trivy-reports sbom
 
             trivy fs \
+              --cache-dir ${TRIVY_CACHE_DIR} \
               --scanners vuln \
               --format table \
               --output trivy-reports/fs-vuln.txt .
 
             trivy fs \
+              --cache-dir ${TRIVY_CACHE_DIR} \
               --scanners vuln,license \
               --format cyclonedx \
               --output sbom/sbom-fs.json .
@@ -96,7 +107,9 @@ pipeline {
               --context /workspace \
               --dockerfile Dockerfile \
               --destination ${IMAGE_NAME}:${IMAGE_TAG} \
-              --destination ${IMAGE_NAME}:latest
+              --destination ${IMAGE_NAME}:latest \
+              --cache=true \
+              --cache-dir=/cache/kaniko
           '''
         }
       }
@@ -136,9 +149,7 @@ pipeline {
         trivy-reports/*,
         sbom/*.json
       '''
-      
       echo "Result : ${currentBuild.currentResult}"
     }
   }
 }
-
