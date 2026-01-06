@@ -2,6 +2,7 @@ pipeline {
   agent {
     kubernetes {
       cloud 'terralogic-eks-agent'
+      namespace 'cloudbees-builds'
       inheritFrom 'jenkins-kaniko-agent'
       defaultContainer 'jnlp'
     }
@@ -28,25 +29,21 @@ pipeline {
       steps {
         checkout scm
         script {
-          env.BRANCH_NAME_ONLY = env.GIT_BRANCH
-            .replaceFirst(/^origin\//, '')
-            .replaceFirst(/^refs\/heads\//, '')
+          env.BRANCH_NAME_ONLY = sh(
+            script: "git rev-parse --abbrev-ref HEAD",
+            returnStdout: true
+          ).trim()
 
           env.SHORT_COMMIT = sh(
             script: "git rev-parse --short=6 HEAD",
             returnStdout: true
           ).trim()
 
-          // Image tagging rule
-          if (env.BRANCH_NAME_ONLY == 'main') {
-            env.IMAGE_TAG = env.SHORT_COMMIT
-          } else {
-            env.IMAGE_TAG = env.BUILD_NUMBER
-          }
+          env.IMAGE_TAG = env.SHORT_COMMIT
 
           echo "Branch     : ${env.BRANCH_NAME_ONLY}"
-          echo "Commit SHA: ${env.SHORT_COMMIT}"
-          echo "Image Tag : ${env.IMAGE_TAG}"
+          echo "Commit SHA : ${env.SHORT_COMMIT}"
+          echo "Image Tag  : ${env.IMAGE_TAG}"
         }
       }
     }
@@ -61,13 +58,6 @@ pipeline {
 
     /* ================= MAVEN BUILD ================= */
     stage('Maven Build') {
-      when {
-        anyOf {
-          expression { env.BRANCH_NAME_ONLY.startsWith('feature-') }
-          expression { env.BRANCH_NAME_ONLY.startsWith('fix-') }
-          branch 'main'
-        }
-      }
       steps {
         sh '''
           mvn clean install \
@@ -77,7 +67,6 @@ pipeline {
     }
 
     stage('Save Maven Cache') {
-      when { branch 'main' }
       steps {
         writeCache(
           name: "${MVN_CACHE_NAME}",
@@ -88,13 +77,6 @@ pipeline {
 
     /* ================= KANIKO BUILD ================= */
     stage('Kaniko Build & Push') {
-      when {
-        anyOf {
-          expression { env.BRANCH_NAME_ONLY.startsWith('feature-') }
-          expression { env.BRANCH_NAME_ONLY.startsWith('fix-') }
-          branch 'main'
-        }
-      }
       steps {
         container('kaniko') {
           sh '''
